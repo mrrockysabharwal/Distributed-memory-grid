@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: dmg-master
+    command: python -m backend.master.controller
+    ports:
+      - "50051:50051" # gRPC
+      - "8000:8000"   # FastAPI Gateway
+    environment:
+      - MASTER_PORT=50051
+      - API_PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./backend:/app/backend
+      - ./proto:/app/proto
+    networks:
+      - dmg-network
+
+  worker-1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: dmg-worker-1
+    command: python -m backend.worker.worker_node --worker-id worker-1 --port 50052 --master-address master:50051
+    ports:
+      - "50052:50052"
+    environment:
+      - WORKER_ID=worker-1
+      - MASTER_ADDRESS=master:50051
+      - WORKER_PORT=50052
+    volumes:
+      - ./backend:/app/backend
+      - ./proto:/app/proto
+    depends_on:
+      - master
+    networks:
+      - dmg-network
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: dmg-worker-2
+    command: python -m backend.worker.worker_node --worker-id worker-2 --port 50053 --master-address master:50051
+    ports:
+      - "50053:50053"
+    environment:
+      - WORKER_ID=worker-2
+      - MASTER_ADDRESS=master:50051
+      - WORKER_PORT=50053
+    volumes:
+      - ./backend:/app/backend
+      - ./proto:/app/proto
+    depends_on:
+      - master
+    networks:
+      - dmg-network
+
+networks:
+  dmg-network:
+    driver: bridge
+

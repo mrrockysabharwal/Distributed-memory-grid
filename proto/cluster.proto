@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package cluster;
+
+// Worker lifecycle & control plane service
+service ClusterCoordinator {
+  // Worker registration with capabilities
+  rpc RegisterWorker (RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  
+  // Periodic worker heartbeat and telemetry
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // Model partition assignment and loading instruction
+  rpc LoadPartition (LoadPartitionRequest) returns (LoadPartitionResponse);
+}
+
+// Data plane / Model partition execution service hosted on workers
+service WorkerExecutor {
+  // Execute forward pass for assigned layer partition
+  rpc ExecutePartition (ExecutePartitionRequest) returns (ExecutePartitionResponse);
+  
+  // Evict or clear KV cache associated with a finished request
+  rpc ClearCache (ClearCacheRequest) returns (ClearCacheResponse);
+}
+
+message WorkerMetadata {
+  string worker_id = 1;
+  string address = 2;
+  string device_type = 3; // "cpu", "cuda:0", etc.
+  int64 total_memory_bytes = 4;
+  int64 available_memory_bytes = 5;
+  int32 assigned_start_layer = 6;
+  int32 assigned_end_layer = 7;
+  int64 last_heartbeat_timestamp = 8;
+  float cpu_utilization = 9;
+  float gpu_utilization = 10;
+}
+
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string address = 2;
+  string device_type = 3;
+  int64 total_memory_bytes = 4;
+  int64 available_memory_bytes = 5;
+}
+
+message RegisterWorkerResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_id = 3;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  int64 available_memory_bytes = 2;
+  float cpu_utilization = 3;
+  float gpu_utilization = 4;
+  int64 active_requests_count = 5;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  bool should_re_register = 2;
+}
+
+message LoadPartitionRequest {
+  string model_id = 1;
+  int32 start_layer = 2;
+  int32 end_layer = 3;
+  int32 total_layers = 4;
+}
+
+message LoadPartitionResponse {
+  bool success = 1;
+  string error_message = 2;
+  int64 memory_used_bytes = 3;
+}
+
+message ExecutePartitionRequest {
+  string request_id = 1;
+  int32 step = 2;
+  // Serialized tensor activations or token embeddings
+  bytes hidden_states = 3;
+  repeated int32 tensor_shape = 4;
+  string tensor_dtype = 5;
+  bool is_prefill = 6;
+}
+
+message ExecutePartitionResponse {
+  string request_id = 1;
+  int32 step = 2;
+  // Output activations to pass to the next stage or logits for the final stage
+  bytes hidden_states = 3;
+  repeated int32 tensor_shape = 4;
+  string tensor_dtype = 5;
+  bool is_final_layer = 6;
+  string error_message = 7;
+}
+
+message ClearCacheRequest {
+  string request_id = 1;
+}
+
+message ClearCacheResponse {
+  bool success = 1;
+}
+

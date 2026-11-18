@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Generate gRPC stubs if proto directory exists
+RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. proto/cluster.proto || true
+
+EXPOSE 8000 50051 50052 50053
+
+CMD ["python", "-m", "backend.api.main"]
+

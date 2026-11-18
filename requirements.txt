@@ -1,0 +1,27 @@
+# Core Deep Learning & NLP
+torch>=2.2.0
+transformers>=4.38.0
+accelerate>=0.27.0
+safetensors>=0.4.0
+
+# Distributed & RPC
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
+protobuf>=4.25.0
+
+# Web Framework & API Gateway
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+websockets>=12.0
+
+# System Metrics & Observability
+psutil>=5.9.8
+
+# Testing & Utilities
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+requests>=2.31.0
+numpy>=1.26.0
+rich>=13.7.0
+
