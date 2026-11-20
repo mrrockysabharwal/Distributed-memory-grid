@@ -42,20 +42,23 @@ class TokenSampler:
             return logits
 
         if HAS_TORCH and isinstance(logits, torch.Tensor):
+            last_logits = logits.view(-1, logits.size(-1))[-1, :]
             for token_id in set(generated_token_ids):
-                if token_id < logits.shape[-1]:
-                    if logits[-1, token_id] < 0:
-                        logits[-1, token_id] = logits[-1, token_id] * penalty
+                if token_id < last_logits.shape[-1]:
+                    if last_logits[token_id] < 0:
+                        last_logits[token_id] = last_logits[token_id] * penalty
                     else:
-                        logits[-1, token_id] = logits[-1, token_id] / penalty
+                        last_logits[token_id] = last_logits[token_id] / penalty
             return logits
         elif HAS_NUMPY and isinstance(logits, np.ndarray):
+            reshaped = logits.reshape(-1, logits.shape[-1])
+            last_logits = reshaped[-1, :]
             for token_id in set(generated_token_ids):
-                if token_id < logits.shape[-1]:
-                    if logits[-1, token_id] < 0:
-                        logits[-1, token_id] = logits[-1, token_id] * penalty
+                if token_id < last_logits.shape[-1]:
+                    if last_logits[token_id] < 0:
+                        last_logits[token_id] = last_logits[token_id] * penalty
                     else:
-                        logits[-1, token_id] = logits[-1, token_id] / penalty
+                        last_logits[token_id] = last_logits[token_id] / penalty
             return logits
         return logits
 
@@ -68,7 +71,7 @@ class TokenSampler:
     ) -> Any:
         """Filter distribution using top-k and/or top-p (nucleus) thresholding."""
         if HAS_TORCH and isinstance(logits, torch.Tensor):
-            last_logits = logits[-1, :].clone()
+            last_logits = logits.view(-1, logits.size(-1))[-1, :].clone()
             if top_k > 0:
                 indices_to_remove = last_logits < torch.topk(last_logits, min(top_k, last_logits.size(-1)))[0][..., -1, None]
                 last_logits[indices_to_remove] = filter_value
@@ -86,7 +89,7 @@ class TokenSampler:
                 last_logits[indices_to_remove] = filter_value
             return last_logits
         elif HAS_NUMPY and isinstance(logits, np.ndarray):
-            last_logits = np.copy(logits[-1, :])
+            last_logits = np.copy(logits.reshape(-1, logits.shape[-1])[-1, :])
             vocab_size = last_logits.shape[-1]
             if top_k > 0 and top_k < vocab_size:
                 top_k_idx = np.argpartition(last_logits, -top_k)[-top_k:]

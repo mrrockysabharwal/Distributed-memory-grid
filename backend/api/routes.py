@@ -1,34 +1,116 @@
 """
-FastAPI route definitions for DMG.
-Corresponds to Section 9: API and Communication Contracts.
-Maintained by Member 4 (Full-stack, Integration & DevOps Lead).
+FastAPI route definitions for Distributed Memory Grid (DMG).
+Handles REST client requests, real-time WebSocket token streaming,
+worker registration, cluster telemetry, and metrics.
+
+Maintained by Member 4 (Full-stack & DevOps Lead) & Member 3 (Inference Optimization Engineer).
 """
+import time
 import uuid
 import asyncio
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+
+from backend.master.registry import WorkerRegistry
+from backend.master.scheduler import RequestScheduler, GenerationRequest, RequestPriority
+from backend.inference.kv_cache import KVCacheManager
+from backend.inference.generation import GenerationEngine, TokenSampler
+from backend.distributed.pipeline_parallel import PipelineParallelEngine, PipelineStage
+from backend.worker.executor import PartitionExecutor
+from backend.monitoring.metrics import MetricsCollector, RequestBenchmark
 from backend.monitoring.telemetry import get_system_telemetry
 
 router = APIRouter()
 
 
+class ClusterState:
+    """Singleton holding live master services and cluster runtime state."""
+    def __init__(self):
+        self.registry = WorkerRegistry()
+        self.scheduler = RequestScheduler(max_queue_size=200)
+        self.kv_cache_mgr = KVCacheManager(max_cached_requests=100)
+        self.metrics_collector = MetricsCollector()
+
+        # Seed initial default local workers if empty
+        self.registry.register(
+            worker_id="worker-1",
+            address="127.0.0.1:50052",
+            device_type="cpu",
+            total_memory=8 * 1024 * 1024 * 1024,
+            available_memory=6 * 1024 * 1024 * 1024,
+        )
+        self.registry.register(
+            worker_id="worker-2",
+            address="127.0.0.1:50053",
+            device_type="cpu",
+            total_memory=8 * 1024 * 1024 * 1024,
+            available_memory=6 * 1024 * 1024 * 1024,
+        )
+
+        # Set up default pipeline stages across workers (Layers 0-2 and 3-5)
+        self.executor_1 = PartitionExecutor(start_layer=0, end_layer=2, kv_cache_mgr=self.kv_cache_mgr)
+        self.executor_2 = PartitionExecutor(start_layer=3, end_layer=5, kv_cache_mgr=self.kv_cache_mgr)
+
+        self.stages = [
+            PipelineStage(stage_id=0, worker_id="worker-1", start_layer=0, end_layer=2, executor=self.executor_1),
+            PipelineStage(stage_id=1, worker_id="worker-2", start_layer=3, end_layer=5, executor=self.executor_2),
+        ]
+        self.pipeline_engine = PipelineParallelEngine(stages=self.stages)
+
+        # Mock tokenizer for streaming text generation
+        class SimpleTokenizer:
+            eos_token_id = 50256
+            def encode(self, text: str, **kwargs):
+                # Return character or word token IDs
+                return [ord(c) % 1000 + 1 for c in text] if text else [1, 2]
+            def decode(self, token_ids: List[int]) -> str:
+                # Deterministic word representation
+                words = [" distributed", " memory", " grid", " tensor", " pipeline", " attention", " inference", " fast", " stream"]
+                return words[token_ids[0] % len(words)]
+
+        self.tokenizer = SimpleTokenizer()
+        self.generation_engine = GenerationEngine(
+            tokenizer=self.tokenizer,
+            pipeline_forward_fn=self.pipeline_engine.forward,
+            kv_cache_mgr=self.kv_cache_mgr,
+        )
+        self.requests_map: Dict[str, GenerationRequest] = {}
+
+
+# Global cluster singleton
+cluster = ClusterState()
+
+
 class GenerateRequest(BaseModel):
     model_id: str = "distilgpt2"
     prompt: str
-    max_new_tokens: int = Field(default=50, ge=1, le=512)
+    max_new_tokens: int = Field(default=20, ge=1, le=512)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     request_id: Optional[str] = None
+    priority: int = Field(default=1, ge=0, le=2)  # 0=High, 1=Normal, 2=Low
 
 
 class ModelLoadRequest(BaseModel):
     model_id: str = "distilgpt2"
+    total_layers: int = 6
     strategy: str = "pipeline_layer"
 
 
 @router.post("/inference/generate")
-async def generate_inference(req: GenerateRequest):
+def generate_inference(req: GenerateRequest):
     job_id = req.request_id or str(uuid.uuid4())
+    gen_req = GenerationRequest(
+        request_id=job_id,
+        model_id=req.model_id,
+        prompt=req.prompt,
+        max_new_tokens=req.max_new_tokens,
+        temperature=req.temperature,
+        priority=req.priority,
+    )
+    cluster.scheduler.submit_request_sync(gen_req)
+    cluster.requests_map[job_id] = gen_req
+
     return {
         "job_id": job_id,
         "status": "queued",
@@ -36,77 +118,129 @@ async def generate_inference(req: GenerateRequest):
         "prompt": req.prompt,
         "max_new_tokens": req.max_new_tokens,
         "temperature": req.temperature,
+        "queue_position": cluster.scheduler.queue_size(),
         "websocket_url": f"/ws/inference/{job_id}",
-    }
-
-
-@router.get("/workers")
-async def list_workers():
-    # Placeholder returning sample worker structure
-    return {
-        "workers": [
-            {
-                "worker_id": "worker-1",
-                "address": "127.0.0.1:50052",
-                "device_type": "cpu",
-                "available_memory_mb": 4096,
-                "model_partition": "layers 0-2",
-                "status": "online",
-            },
-            {
-                "worker_id": "worker-2",
-                "address": "127.0.0.1:50053",
-                "device_type": "cpu",
-                "available_memory_mb": 4096,
-                "model_partition": "layers 3-5",
-                "status": "online",
-            },
-        ]
-    }
-
-
-@router.get("/cluster/status")
-async def cluster_status():
-    telemetry = get_system_telemetry()
-    return {
-        "cluster_state": "healthy",
-        "active_workers": 2,
-        "total_active_requests": 0,
-        "master_telemetry": telemetry,
-    }
-
-
-@router.post("/models/load")
-async def load_model(req: ModelLoadRequest):
-    return {
-        "status": "success",
-        "message": f"Model '{req.model_id}' partitioned and loaded across active cluster workers.",
-        "model_id": req.model_id,
-    }
-
-
-@router.get("/metrics")
-async def get_metrics():
-    return {
-        "ttft_seconds_avg": 0.12,
-        "tokens_per_second_avg": 24.5,
-        "total_processed_requests": 0,
-        "per_node_ram_usage_mb": {"worker-1": 850, "worker-2": 820},
     }
 
 
 @router.websocket("/ws/inference/{job_id}")
 async def websocket_inference_stream(websocket: WebSocket, job_id: str):
     await websocket.accept()
+    benchmark = RequestBenchmark(request_id=job_id)
+    tokens_streamed = 0
+
     try:
-        # Initial status
-        await websocket.send_json({"event": "status", "job_id": job_id, "status": "processing"})
-        # Stream mock / generated tokens
-        demo_tokens = ["Distributed ", "Memory ", "Grid ", "inference ", "is ", "working!"]
-        for token in demo_tokens:
-            await asyncio.sleep(0.1)
-            await websocket.send_json({"event": "token", "job_id": job_id, "token": token})
-        await websocket.send_json({"event": "done", "job_id": job_id})
+        req = cluster.requests_map.get(job_id)
+        prompt = req.prompt if req else f"Demo prompt for {job_id}"
+        max_tokens = req.max_new_tokens if req else 20
+        temperature = req.temperature if req else 0.7
+
+        await websocket.send_json({
+            "event": "status",
+            "job_id": job_id,
+            "status": "processing",
+            "prompt": prompt,
+        })
+
+        # Real-time token streaming from GenerationEngine
+        async for token_text in cluster.generation_engine.stream_generate(
+            prompt=prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            request_id=job_id,
+        ):
+            if tokens_streamed == 0:
+                benchmark.mark_first_token()
+            tokens_streamed += 1
+
+            await websocket.send_json({
+                "event": "token",
+                "job_id": job_id,
+                "token": token_text,
+                "step": tokens_streamed,
+            })
+            await asyncio.sleep(0.02)  # Natural token cadence
+
+        benchmark.mark_end(tokens_streamed)
+        cluster.metrics_collector.record(benchmark)
+
+        await websocket.send_json({
+            "event": "done",
+            "job_id": job_id,
+            "tokens_generated": tokens_streamed,
+            "ttft_seconds": round(benchmark.ttft_seconds, 4),
+            "tokens_per_second": round(benchmark.tokens_per_second, 2),
+            "total_latency_seconds": round(benchmark.total_latency_seconds, 4),
+        })
+
     except WebSocketDisconnect:
         pass
+    finally:
+        cluster.kv_cache_mgr.clear_request(job_id)
+        cluster.scheduler.complete_request(job_id)
 
+
+@router.get("/workers")
+def list_workers():
+    active_workers = cluster.registry.get_active_workers()
+    workers_out = []
+    for w in active_workers:
+        partition_desc = f"layers {w.start_layer}-{w.end_layer}" if w.start_layer >= 0 else "unassigned"
+        workers_out.append({
+            "worker_id": w.worker_id,
+            "address": w.address,
+            "device_type": w.device_type,
+            "available_memory_mb": round(w.available_memory_bytes / (1024 * 1024), 2),
+            "model_partition": partition_desc,
+            "status": "online" if w.is_active else "offline",
+            "cpu_utilization": w.cpu_utilization,
+        })
+    return {"workers": workers_out, "count": len(workers_out)}
+
+
+@router.get("/cluster/status")
+def cluster_status():
+    telemetry = get_system_telemetry()
+    active_workers = cluster.registry.get_active_workers()
+    cache_stats = cluster.kv_cache_mgr.current_usage_stats()
+
+    return {
+        "cluster_state": "healthy" if active_workers else "degraded",
+        "active_workers": len(active_workers),
+        "queue_size": cluster.scheduler.queue_size(),
+        "total_active_requests": cluster.scheduler.active_count(),
+        "kv_cache": cache_stats,
+        "master_telemetry": telemetry,
+    }
+
+
+@router.post("/models/load")
+def load_model(req: ModelLoadRequest):
+    active_workers = cluster.registry.get_active_workers()
+    if not active_workers:
+        raise HTTPException(status_code=400, detail="No active workers available for partitioning.")
+
+    worker_ids = [w.worker_id for w in active_workers]
+    assignments = cluster.scheduler.plan_partitions(req.total_layers, worker_ids)
+    cluster.registry.assign_partitions(assignments)
+
+    return {
+        "status": "success",
+        "message": f"Model '{req.model_id}' partitioned across {len(worker_ids)} workers.",
+        "model_id": req.model_id,
+        "partition_assignments": assignments,
+    }
+
+
+@router.get("/metrics")
+def get_metrics():
+    summary = cluster.metrics_collector.summary()
+    cache_stats = cluster.kv_cache_mgr.current_usage_stats()
+
+    return {
+        "ttft_seconds_avg": summary.get("avg_ttft_seconds", 0.0),
+        "tokens_per_second_avg": summary.get("avg_tokens_per_second", 0.0),
+        "total_processed_requests": summary.get("total_requests", 0),
+        "kv_cache_memory_mb": cache_stats.get("total_memory_mb", 0.0),
+        "kv_cache_hit_rate": cache_stats.get("hit_rate", 0.0),
+    }
