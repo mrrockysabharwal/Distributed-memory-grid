@@ -6,16 +6,17 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.api.routes import router
+from backend.core.config import settings
 
 app = FastAPI(
-    title="Distributed Memory Grid (DMG) API Gateway",
-    description="Real-time distributed LLM inference engine control plane and streaming gateway.",
-    version="0.1.0",
+    title=settings.app_name,
+    description=settings.app_description,
+    version=settings.app_version,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,5 +31,11 @@ def healthcheck():
 
 
 if __name__ == "__main__":
-    uvicorn.run("backend.api.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "backend.api.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
+        log_level=settings.log_level.lower(),
+    )
 
