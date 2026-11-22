@@ -32,3 +32,4 @@ def test_get_worker_partition_blocks():
     # Slice layers 4-7 for worker-2
     worker2_blocks = loader.get_worker_partition_blocks(4, 7)
     assert len(worker2_blocks) == 4
+

@@ -98,3 +98,4 @@ def run_stress_test(num_concurrent_requests: int = 50, max_batch_size: int = 8):
 
 if __name__ == "__main__":
     run_stress_test(50, max_batch_size=8)
+
