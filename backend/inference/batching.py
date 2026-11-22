@@ -22,6 +22,7 @@ class ContinuousBatcher:
     the continuous batcher admits new requests on-the-fly and releases resources
     (including KV cache) the exact moment any sequence reaches EOS or length limit.
     """
+    
     def __init__(
         self,
         scheduler: RequestScheduler,

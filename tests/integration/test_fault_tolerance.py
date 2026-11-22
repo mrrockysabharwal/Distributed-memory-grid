@@ -114,3 +114,4 @@ def test_worker_recovery_and_reintegration():
     assert len(active_after) == 2
     assert master._partition_map["w1"] == (0, 5)
     assert master._partition_map["w2"] == (6, 11)
+

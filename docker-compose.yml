@@ -8,7 +8,7 @@ services:
     container_name: dmg-master
     command: python -m backend.master.controller
     ports:
-      - "50051:50051" # gRPC
+      - "50051:50051" # gRPC / Master
       - "8000:8000"   # FastAPI Gateway
     environment:
       - MASTER_PORT=50051
@@ -60,7 +60,18 @@ services:
     networks:
       - dmg-network
 
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: dmg-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - master
+    networks:
+      - dmg-network
+
 networks:
   dmg-network:
     driver: bridge
-
