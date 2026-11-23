@@ -29,6 +29,8 @@ wheels/
 *.bin
 *.safetensors
 models/
+!backend/models/
+!backend/models/*.py
 huggingface/
 .cache/
 
@@ -55,4 +57,5 @@ pnpm-debug.log*
 logs/
 metrics.db
 sqlite.db
+/data/inference_jobs.db
 

@@ -1,9 +1,15 @@
 """Centralized application settings."""
 
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_DEFAULT_DATABASE_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "inference_jobs.db"
+)
 
 
 class Settings(BaseSettings):
@@ -24,6 +30,7 @@ class Settings(BaseSettings):
     debug: bool = True
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:5173"]
+    database_url: str = f"sqlite:///{_DEFAULT_DATABASE_PATH.as_posix()}"
 
     @field_validator("log_level")
     @classmethod
