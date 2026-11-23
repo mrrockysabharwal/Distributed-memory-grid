@@ -82,19 +82,16 @@ class ClusterState:
 cluster = ClusterState()
 
 
-class GenerateRequest(BaseModel):
-    model_id: str = "distilgpt2"
-    prompt: str
-    max_new_tokens: int = Field(default=20, ge=1, le=512)
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    request_id: Optional[str] = None
-    priority: int = Field(default=1, ge=0, le=2)  # 0=High, 1=Normal, 2=Low
-
-
-class ModelLoadRequest(BaseModel):
-    model_id: str = "distilgpt2"
-    total_layers: int = 6
-    strategy: str = "pipeline_layer"
+from backend.api.schemas import (
+    GenerateRequest,
+    GenerateResponse,
+    WorkerItem,
+    WorkersListResponse,
+    ClusterStatusResponse,
+    ModelLoadRequest,
+    ModelLoadResponse,
+    MetricsResponse,
+)
 
 
 @router.post("/inference/generate")
