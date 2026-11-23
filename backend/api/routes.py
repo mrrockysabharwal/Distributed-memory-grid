@@ -3,12 +3,17 @@ FastAPI route definitions for DMG.
 Corresponds to Section 9: API and Communication Contracts.
 Maintained by Member 4 (Full-stack, Integration & DevOps Lead).
 """
-import uuid
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+import uuid
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session
+
+from backend.core.database import get_db
 from backend.monitoring.telemetry import get_system_telemetry
+from backend.services.job_service import create_job, get_job
 
 router = APIRouter()
 
@@ -27,16 +32,44 @@ class ModelLoadRequest(BaseModel):
 
 
 @router.post("/inference/generate")
-async def generate_inference(req: GenerateRequest):
+def generate_inference(req: GenerateRequest, db: Session = Depends(get_db)):
     job_id = req.request_id or str(uuid.uuid4())
+    job = create_job(
+        db,
+        job_id=job_id,
+        model_id=req.model_id,
+        prompt=req.prompt,
+        max_new_tokens=req.max_new_tokens,
+        temperature=req.temperature,
+    )
     return {
-        "job_id": job_id,
-        "status": "queued",
-        "model_id": req.model_id,
-        "prompt": req.prompt,
-        "max_new_tokens": req.max_new_tokens,
-        "temperature": req.temperature,
-        "websocket_url": f"/ws/inference/{job_id}",
+        "job_id": job.job_id,
+        "status": job.status,
+        "model_id": job.model_id,
+        "prompt": job.prompt,
+        "max_new_tokens": job.max_new_tokens,
+        "temperature": job.temperature,
+        "websocket_url": f"/ws/inference/{job.job_id}",
+    }
+
+
+@router.get("/inference/jobs/{job_id}")
+def get_inference_job(job_id: str, db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Inference job not found")
+
+    return {
+        "job_id": job.job_id,
+        "model_id": job.model_id,
+        "prompt": job.prompt,
+        "max_new_tokens": job.max_new_tokens,
+        "temperature": job.temperature,
+        "status": job.status,
+        "output": job.output,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
     }
 
 
