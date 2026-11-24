@@ -46,3 +46,4 @@ def test_docker_compose_configuration():
     assert "dmg-worker-2" in compose_content
     assert "dmg-frontend" in compose_content
     assert "dmg-network" in compose_content
+

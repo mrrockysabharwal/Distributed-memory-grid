@@ -119,3 +119,4 @@ The Master Controller runs an asynchronous health detection loop monitoring work
 2. **Intra-Layer Tensor Parallelism (Megatron-LM style)**: Combine pipeline parallelism with intra-layer tensor sharding for models exceeding 70B parameters.
 3. **Kubernetes Helm Charts & Auto-scaling**: Package workers into Kubernetes DaemonSets with KEDA metrics-based auto-scaling.
 4. **Prefix KV Cache Sharing (Radix Attention)**: Enable shared attention prefix caching across multi-turn chat sessions to accelerate prefill latency.
+

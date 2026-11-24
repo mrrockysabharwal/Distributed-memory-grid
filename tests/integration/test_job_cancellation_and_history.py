@@ -90,3 +90,4 @@ def test_cluster_admin_reset():
     # Check requests_map was cleared
     assert len(cluster.requests_map) == 0
     assert len(cluster.cancelled_jobs) == 0
+
