@@ -46,3 +46,4 @@ export default function WorkerTopology({ workers, onRebalance }) {
     </section>
   );
 }
+

@@ -1,15 +1,15 @@
 """
 FastAPI route definitions for Distributed Memory Grid (DMG).
 Handles REST client requests, real-time WebSocket token streaming,
-worker registration, cluster telemetry, and metrics.
+job cancellation, history tracking, cluster telemetry, and Prometheus metrics.
 
 Maintained by Member 4 (Full-stack & DevOps Lead) & Member 3 (Inference Optimization Engineer).
 """
 import time
 import uuid
 import asyncio
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from typing import Optional, List, Dict, Any, Set
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from backend.master.registry import WorkerRegistry
@@ -21,6 +21,20 @@ from backend.worker.executor import PartitionExecutor
 from backend.monitoring.metrics import MetricsCollector, RequestBenchmark
 from backend.monitoring.telemetry import get_system_telemetry
 
+from backend.api.schemas import (
+    GenerateRequest,
+    GenerateResponse,
+    CancelResponse,
+    HistoryItem,
+    HistoryResponse,
+    WorkerItem,
+    WorkersListResponse,
+    ClusterStatusResponse,
+    ModelLoadRequest,
+    ModelLoadResponse,
+    MetricsResponse,
+)
+
 router = APIRouter()
 
 
@@ -31,6 +45,8 @@ class ClusterState:
         self.scheduler = RequestScheduler(max_queue_size=200)
         self.kv_cache_mgr = KVCacheManager(max_cached_requests=100)
         self.metrics_collector = MetricsCollector()
+        self.cancelled_jobs: Set[str] = set()
+        self.request_history: List[Dict[str, Any]] = []
 
         # Seed initial default local workers if empty
         self.registry.register(
@@ -62,10 +78,8 @@ class ClusterState:
         class SimpleTokenizer:
             eos_token_id = 50256
             def encode(self, text: str, **kwargs):
-                # Return character or word token IDs
                 return [ord(c) % 1000 + 1 for c in text] if text else [1, 2]
             def decode(self, token_ids: List[int]) -> str:
-                # Deterministic word representation
                 words = [" distributed", " memory", " grid", " tensor", " pipeline", " attention", " inference", " fast", " stream"]
                 return words[token_ids[0] % len(words)]
 
@@ -80,18 +94,6 @@ class ClusterState:
 
 # Global cluster singleton
 cluster = ClusterState()
-
-
-from backend.api.schemas import (
-    GenerateRequest,
-    GenerateResponse,
-    WorkerItem,
-    WorkersListResponse,
-    ClusterStatusResponse,
-    ModelLoadRequest,
-    ModelLoadResponse,
-    MetricsResponse,
-)
 
 
 @router.post("/inference/generate")
@@ -120,17 +122,48 @@ def generate_inference(req: GenerateRequest):
     }
 
 
+@router.post("/inference/cancel/{job_id}")
+def cancel_inference(job_id: str):
+    """Cancel an active or queued generation job."""
+    cluster.cancelled_jobs.add(job_id)
+    cluster.kv_cache_mgr.clear_request(job_id)
+    cluster.scheduler.complete_request(job_id)
+
+    # Update history status if present
+    for item in cluster.request_history:
+        if item.get("job_id") == job_id:
+            item["status"] = "cancelled"
+
+    return {
+        "job_id": job_id,
+        "status": "cancelled",
+        "message": f"Inference job {job_id} cancelled and resources released.",
+    }
+
+
+@router.get("/inference/history")
+def get_inference_history(limit: int = 20):
+    """Retrieve history of recently completed or cancelled inference jobs."""
+    recent = list(reversed(cluster.request_history))[:limit]
+    return {
+        "history": recent,
+        "total_count": len(cluster.request_history),
+    }
+
+
 @router.websocket("/ws/inference/{job_id}")
 async def websocket_inference_stream(websocket: WebSocket, job_id: str):
     await websocket.accept()
     benchmark = RequestBenchmark(request_id=job_id)
     tokens_streamed = 0
+    status = "completed"
 
     try:
         req = cluster.requests_map.get(job_id)
         prompt = req.prompt if req else f"Demo prompt for {job_id}"
         max_tokens = req.max_new_tokens if req else 20
         temperature = req.temperature if req else 0.7
+        model_id = req.model_id if req else "distilgpt2"
 
         await websocket.send_json({
             "event": "status",
@@ -139,13 +172,22 @@ async def websocket_inference_stream(websocket: WebSocket, job_id: str):
             "prompt": prompt,
         })
 
-        # Real-time token streaming from GenerationEngine
         async for token_text in cluster.generation_engine.stream_generate(
             prompt=prompt,
             max_new_tokens=max_tokens,
             temperature=temperature,
             request_id=job_id,
         ):
+            # Check for cancellation signal
+            if job_id in cluster.cancelled_jobs:
+                status = "cancelled"
+                await websocket.send_json({
+                    "event": "cancelled",
+                    "job_id": job_id,
+                    "message": "Generation stopped by user.",
+                })
+                break
+
             if tokens_streamed == 0:
                 benchmark.mark_first_token()
             tokens_streamed += 1
@@ -156,23 +198,41 @@ async def websocket_inference_stream(websocket: WebSocket, job_id: str):
                 "token": token_text,
                 "step": tokens_streamed,
             })
-            await asyncio.sleep(0.02)  # Natural token cadence
+            await asyncio.sleep(0.02)
 
         benchmark.mark_end(tokens_streamed)
         cluster.metrics_collector.record(benchmark)
 
-        await websocket.send_json({
-            "event": "done",
+        if status != "cancelled":
+            await websocket.send_json({
+                "event": "done",
+                "job_id": job_id,
+                "tokens_generated": tokens_streamed,
+                "ttft_seconds": round(benchmark.ttft_seconds, 4),
+                "tokens_per_second": round(benchmark.tokens_per_second, 2),
+                "total_latency_seconds": round(benchmark.total_latency_seconds, 4),
+            })
+
+        # Append to in-memory request history
+        cluster.request_history.append({
             "job_id": job_id,
+            "prompt": prompt[:80] + ("..." if len(prompt) > 80 else ""),
+            "status": status,
+            "model_id": model_id,
             "tokens_generated": tokens_streamed,
             "ttft_seconds": round(benchmark.ttft_seconds, 4),
             "tokens_per_second": round(benchmark.tokens_per_second, 2),
             "total_latency_seconds": round(benchmark.total_latency_seconds, 4),
+            "timestamp": time.time(),
         })
+        # Keep recent 50
+        if len(cluster.request_history) > 50:
+            cluster.request_history.pop(0)
 
     except WebSocketDisconnect:
         pass
     finally:
+        cluster.cancelled_jobs.discard(job_id)
         cluster.kv_cache_mgr.clear_request(job_id)
         cluster.scheduler.complete_request(job_id)
 
@@ -241,3 +301,42 @@ def get_metrics():
         "kv_cache_memory_mb": cache_stats.get("total_memory_mb", 0.0),
         "kv_cache_hit_rate": cache_stats.get("hit_rate", 0.0),
     }
+
+
+@router.get("/metrics/prometheus")
+def get_prometheus_metrics():
+    """Prometheus exposition format exporter for cluster observability."""
+    summary = cluster.metrics_collector.summary()
+    cache_stats = cluster.kv_cache_mgr.current_usage_stats()
+    active_workers = len(cluster.registry.get_active_workers())
+
+    lines = [
+        "# HELP dmg_active_workers Number of active distributed worker nodes.",
+        "# TYPE dmg_active_workers gauge",
+        f"dmg_active_workers {active_workers}",
+        "# HELP dmg_queue_size Pending inference requests in scheduler.",
+        "# TYPE dmg_queue_size gauge",
+        f"dmg_queue_size {cluster.scheduler.queue_size()}",
+        "# HELP dmg_processed_requests_total Total completed inference requests.",
+        "# TYPE dmg_processed_requests_total counter",
+        f"dmg_processed_requests_total {summary.get('total_requests', 0)}",
+        "# HELP dmg_avg_ttft_seconds Average time to first token in seconds.",
+        "# TYPE dmg_avg_ttft_seconds gauge",
+        f"dmg_avg_ttft_seconds {summary.get('avg_ttft_seconds', 0.0)}",
+        "# HELP dmg_avg_tokens_per_second Average generated tokens per second.",
+        "# TYPE dmg_avg_tokens_per_second gauge",
+        f"dmg_avg_tokens_per_second {summary.get('avg_tokens_per_second', 0.0)}",
+        "# HELP dmg_kv_cache_memory_bytes Total memory occupied by KV cache.",
+        "# TYPE dmg_kv_cache_memory_bytes gauge",
+        f"dmg_kv_cache_memory_bytes {cache_stats.get('total_memory_bytes', 0)}",
+    ]
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+@router.post("/admin/cluster/reset")
+def reset_cluster():
+    """Admin endpoint to clear KV cache and reset metrics."""
+    cluster.kv_cache_mgr.clear_all()
+    cluster.cancelled_jobs.clear()
+    cluster.requests_map.clear()
+    return {"status": "ok", "message": "Cluster cache and state successfully reset."}

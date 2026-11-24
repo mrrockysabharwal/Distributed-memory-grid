@@ -9,6 +9,7 @@ export default function ChatConsole({
   lastStats,
   outputRef,
   onSend,
+  onCancel,
   temperature,
   setTemperature,
   maxTokens,
@@ -59,15 +60,25 @@ export default function ChatConsole({
             className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500"
             onKeyDown={(e) => e.key === "Enter" && onSend()}
           />
-          <button
-            onClick={onSend}
-            disabled={isGenerating || !prompt.trim()}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm px-6 py-2.5 rounded-lg disabled:opacity-50 transition-colors shadow-lg shadow-indigo-600/20"
-          >
-            {isGenerating ? "Streaming..." : "Generate"}
-          </button>
+          {isGenerating ? (
+            <button
+              onClick={onCancel}
+              className="bg-rose-600 hover:bg-rose-500 text-white font-medium text-sm px-6 py-2.5 rounded-lg transition-colors shadow-lg shadow-rose-600/20"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={onSend}
+              disabled={!prompt.trim()}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm px-6 py-2.5 rounded-lg disabled:opacity-50 transition-colors shadow-lg shadow-indigo-600/20"
+            >
+              Generate
+            </button>
+          )}
         </div>
       </div>
     </section>
   );
 }
+

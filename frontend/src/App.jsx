@@ -3,33 +3,39 @@ import Navbar from "./components/Navbar";
 import TelemetryBar from "./components/TelemetryBar";
 import WorkerTopology from "./components/WorkerTopology";
 import ChatConsole from "./components/ChatConsole";
+import RequestHistory from "./components/RequestHistory";
 
 export default function App() {
   const [workers, setWorkers] = useState([]);
   const [clusterStatus, setClusterStatus] = useState(null);
   const [metrics, setMetrics] = useState(null);
+  const [history, setHistory] = useState([]);
 
   // Generation state
   const [prompt, setPrompt] = useState("");
   const [streamedOutput, setStreamedOutput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [activeJobId, setActiveJobId] = useState(null);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(25);
   const [priority, setPriority] = useState(1);
   const [lastStats, setLastStats] = useState(null);
 
   const outputRef = useRef(null);
+  const wsRef = useRef(null);
 
   const fetchData = async () => {
     try {
-      const [wRes, sRes, mRes] = await Promise.all([
+      const [wRes, sRes, mRes, hRes] = await Promise.all([
         fetch("http://localhost:8000/api/workers").then((r) => r.json()),
         fetch("http://localhost:8000/api/cluster/status").then((r) => r.json()),
         fetch("http://localhost:8000/api/metrics").then((r) => r.json()),
+        fetch("http://localhost:8000/api/inference/history").then((r) => r.json()),
       ]);
       setWorkers(wRes.workers || []);
       setClusterStatus(sRes);
       setMetrics(mRes);
+      setHistory(hRes.history || []);
     } catch (e) {
       // API may be offline or booting
     }
@@ -60,12 +66,14 @@ export default function App() {
         }),
       });
       const data = await res.json();
+      setActiveJobId(data.job_id);
 
       const wsUrl = data.websocket_url?.startsWith("/")
         ? `ws://localhost:8000${data.websocket_url}`
         : `ws://localhost:8000/ws/inference/${data.job_id}`;
 
       const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
@@ -76,6 +84,7 @@ export default function App() {
           }
         } else if (msg.event === "done") {
           setIsGenerating(false);
+          setActiveJobId(null);
           setLastStats({
             tokens: msg.tokens_generated,
             ttft: msg.ttft_seconds,
@@ -84,15 +93,41 @@ export default function App() {
           });
           fetchData();
           ws.close();
+        } else if (msg.event === "cancelled") {
+          setIsGenerating(false);
+          setActiveJobId(null);
+          fetchData();
+          ws.close();
         }
       };
 
       ws.onerror = () => {
         setIsGenerating(false);
+        setActiveJobId(null);
       };
     } catch (err) {
       console.error(err);
       setIsGenerating(false);
+      setActiveJobId(null);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!activeJobId) return;
+    try {
+      await fetch(`http://localhost:8000/api/inference/cancel/${activeJobId}`, {
+        method: "POST",
+      });
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      setIsGenerating(false);
+      setActiveJobId(null);
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      setIsGenerating(false);
+      setActiveJobId(null);
     }
   };
 
@@ -122,6 +157,7 @@ export default function App() {
           lastStats={lastStats}
           outputRef={outputRef}
           onSend={handleSendPrompt}
+          onCancel={handleCancel}
           temperature={temperature}
           setTemperature={setTemperature}
           maxTokens={maxTokens}
@@ -130,6 +166,8 @@ export default function App() {
           setPriority={setPriority}
         />
       </main>
+
+      <RequestHistory history={history} />
     </div>
   );
 }

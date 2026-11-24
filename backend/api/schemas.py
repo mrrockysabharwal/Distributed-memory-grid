@@ -32,6 +32,32 @@ class GenerateResponse(BaseModel):
     websocket_url: str
 
 
+class CancelResponse(BaseModel):
+    """Response returned upon cancelling an inference job."""
+    job_id: str
+    status: str
+    message: str
+
+
+class HistoryItem(BaseModel):
+    """Record of a processed inference request."""
+    job_id: str
+    prompt: str
+    status: str
+    model_id: str
+    tokens_generated: int
+    ttft_seconds: float
+    tokens_per_second: float
+    total_latency_seconds: float
+    timestamp: float
+
+
+class HistoryResponse(BaseModel):
+    """List of recent inference requests."""
+    history: List[HistoryItem]
+    total_count: int
+
+
 class WorkerItem(BaseModel):
     """Worker node status and assigned model partition details."""
     worker_id: str

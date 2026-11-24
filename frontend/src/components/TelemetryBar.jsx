@@ -34,3 +34,4 @@ export default function TelemetryBar({ metrics, clusterStatus }) {
     </div>
   );
 }
+
