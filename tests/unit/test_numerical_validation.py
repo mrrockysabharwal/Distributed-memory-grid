@@ -107,3 +107,4 @@ def test_model_validator_deterministic_equivalence():
     assert result["average_cosine_similarity"] == 1.0
     assert result["top1_concordance_rate"] == 1.0
     assert result["total_steps_verified"] == 3
+

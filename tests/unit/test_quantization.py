@@ -84,3 +84,4 @@ def test_quantized_transformer_block_memory_savings():
     out, presents = block_int8(x, use_cache=True)
     assert out.shape == x.shape
     assert presents is not None
+

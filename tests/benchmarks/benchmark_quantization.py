@@ -110,3 +110,4 @@ if __name__ == "__main__":
     benchmark_weight_memory_footprint()
     benchmark_activation_transfer_latency()
     benchmark_numerical_fidelity()
+
