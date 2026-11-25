@@ -152,3 +152,7 @@ class ModelPartitionLoader:
             return embeddings, blocks, head, total_layers
 
         raise NotImplementedError(f"Layer extraction for architecture {type(model)} not yet implemented.")
+
+
+
+        .
