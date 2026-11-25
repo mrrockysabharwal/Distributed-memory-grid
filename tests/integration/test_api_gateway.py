@@ -29,10 +29,13 @@ def test_api_list_workers():
 
 
 def test_api_load_model():
-    req = ModelLoadRequest(model_id="distilgpt2", total_layers=6)
+    req = ModelLoadRequest(model_id="distilgpt2", total_layers=6, precision="int8")
     res = load_model(req)
     assert res["status"] == "success"
     assert "partition_assignments" in res
+    assert res["precision"] == "int8"
+    assert res["memory_savings_percent"] == 75.0
+    assert res["compression_ratio"] == 4.0
     assignments = res["partition_assignments"]
     assert "worker-1" in assignments
     assert "worker-2" in assignments

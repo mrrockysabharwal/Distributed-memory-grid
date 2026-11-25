@@ -58,9 +58,16 @@ def test_worker_item_schema():
 
 
 def test_model_load_request():
-    load_req = ModelLoadRequest(model_id="gpt2-small", total_layers=12)
+    load_req = ModelLoadRequest(
+        model_id="gpt2-small",
+        total_layers=12,
+        precision="int8",
+        activation_compression="fp16",
+    )
     assert load_req.model_id == "gpt2-small"
     assert load_req.total_layers == 12
+    assert load_req.precision == "int8"
+    assert load_req.activation_compression == "fp16"
 
     with pytest.raises(ValidationError):
         ModelLoadRequest(total_layers=0)

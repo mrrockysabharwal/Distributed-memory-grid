@@ -29,10 +29,12 @@ class PartitionExecutor:
         end_layer: int,
         device: str = "cpu",
         kv_cache_mgr: Optional[KVCacheManager] = None,
+        precision: str = "fp32",
     ):
         self.start_layer = start_layer
         self.end_layer = end_layer
         self.device_str = device
+        self.precision = precision.lower()
         self.kv_cache_mgr = kv_cache_mgr or KVCacheManager()
 
         if HAS_TORCH:

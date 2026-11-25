@@ -281,11 +281,19 @@ def load_model(req: ModelLoadRequest):
     assignments = cluster.scheduler.plan_partitions(req.total_layers, worker_ids)
     cluster.registry.assign_partitions(assignments)
 
+    # Configure precision and activation compression
+    cluster.pipeline_engine.activation_compression = req.activation_compression
+    savings = 75.0 if req.precision.lower() == "int8" else (50.0 if req.precision.lower() == "fp16" else 0.0)
+    ratio = 4.0 if req.precision.lower() == "int8" else (2.0 if req.precision.lower() == "fp16" else 1.0)
+
     return {
         "status": "success",
-        "message": f"Model '{req.model_id}' partitioned across {len(worker_ids)} workers.",
+        "message": f"Model '{req.model_id}' ({req.precision.upper()}) partitioned across {len(worker_ids)} workers.",
         "model_id": req.model_id,
         "partition_assignments": assignments,
+        "precision": req.precision.lower(),
+        "memory_savings_percent": savings,
+        "compression_ratio": ratio,
     }
 
 

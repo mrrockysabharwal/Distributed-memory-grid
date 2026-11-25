@@ -24,11 +24,33 @@ except ImportError:
     HAS_NUMPY = False
 
 
-def serialize_tensor(tensor: Any) -> Tuple[bytes, List[int], str]:
+def serialize_tensor(tensor: Any, compression: Optional[str] = None) -> Tuple[bytes, List[int], str]:
     """
     Serialize a PyTorch tensor or NumPy array into raw bytes, shape, and dtype for network transport.
+    Supports optional compression ('fp16', 'int8') to reduce network payload size across worker stages.
     """
     buffer = io.BytesIO()
+
+    # Apply optional compression
+    if compression == "fp16":
+        if HAS_TORCH and isinstance(tensor, torch.Tensor):
+            tensor = tensor.to(torch.float16)
+        elif HAS_NUMPY and isinstance(tensor, np.ndarray):
+            tensor = tensor.astype(np.float16)
+    elif compression == "int8":
+        if HAS_NUMPY and isinstance(tensor, np.ndarray):
+            max_val = float(np.max(np.abs(tensor))) if tensor.size > 0 else 1.0
+            scale = max_val / 127.0 if max_val > 0 else 1.0
+            q_arr = np.clip(np.round(tensor / scale), -128, 127).astype(np.int8)
+            np.save(buffer, {"quantized": q_arr, "scale": scale})
+            return buffer.getvalue(), list(tensor.shape), "int8_scaled"
+        elif HAS_TORCH and isinstance(tensor, torch.Tensor):
+            max_val = float(torch.max(torch.abs(tensor)).item()) if tensor.nelement() > 0 else 1.0
+            scale = max_val / 127.0 if max_val > 0 else 1.0
+            q_t = torch.clamp(torch.round(tensor / scale), -128, 127).to(torch.int8)
+            torch.save({"quantized": q_t, "scale": scale}, buffer)
+            return buffer.getvalue(), list(tensor.shape), "int8_scaled"
+
     if HAS_TORCH and isinstance(tensor, torch.Tensor):
         torch.save(tensor.detach().cpu(), buffer)
         return buffer.getvalue(), list(tensor.shape), str(tensor.dtype)
@@ -43,15 +65,25 @@ def serialize_tensor(tensor: Any) -> Tuple[bytes, List[int], str]:
     raise TypeError(f"Unsupported tensor type for serialization: {type(tensor)}")
 
 
-def deserialize_tensor(data: bytes, device: str = "cpu") -> Any:
+def deserialize_tensor(data: bytes, device: str = "cpu", decompress_to_fp32: bool = True) -> Any:
     """
     Deserialize raw bytes back into a PyTorch tensor or NumPy array.
+    Automatically handles decompressed restitution if stored as compressed INT8 or FP16.
     """
     buffer = io.BytesIO(data)
     # Check if the data begins with NumPy format header (\x93NUMPY)
     if data.startswith(b"\x93NUMPY"):
         if HAS_NUMPY:
-            arr = np.load(buffer, allow_pickle=True)
+            obj = np.load(buffer, allow_pickle=True)
+            if isinstance(obj, np.ndarray) and obj.dtype == object and obj.shape == ():
+                loaded_dict = obj.item()
+                if isinstance(loaded_dict, dict) and "quantized" in loaded_dict and "scale" in loaded_dict:
+                    q = loaded_dict["quantized"].astype(np.float32)
+                    arr = q * float(loaded_dict["scale"])
+                    return arr
+            arr = obj
+            if decompress_to_fp32 and arr.dtype == np.float16:
+                arr = arr.astype(np.float32)
             if HAS_TORCH and device != "numpy":
                 try:
                     return torch.from_numpy(arr).to(device)
@@ -60,7 +92,13 @@ def deserialize_tensor(data: bytes, device: str = "cpu") -> Any:
             return arr
     # Otherwise attempt torch.load
     if HAS_TORCH:
-        return torch.load(buffer, map_location=device, weights_only=False)
+        loaded = torch.load(buffer, map_location=device, weights_only=False)
+        if isinstance(loaded, dict) and "quantized" in loaded and "scale" in loaded:
+            q = loaded["quantized"].to(torch.float32)
+            return q * float(loaded["scale"])
+        if decompress_to_fp32 and isinstance(loaded, torch.Tensor) and loaded.dtype == torch.float16:
+            loaded = loaded.to(torch.float32)
+        return loaded
     elif HAS_NUMPY:
         # Fallback to numpy if torch is unavailable
         try:
@@ -101,10 +139,12 @@ class PipelineParallelEngine:
         stages: List[PipelineStage],
         embedding_fn: Optional[Callable[[Any], Any]] = None,
         final_head_fn: Optional[Callable[[Any], Any]] = None,
+        activation_compression: Optional[str] = None,
     ):
         self.stages = sorted(stages, key=lambda s: s.stage_id)
         self.embedding_fn = embedding_fn or self._default_embedding_fn
         self.final_head_fn = final_head_fn or self._default_head_fn
+        self.activation_compression = activation_compression
 
     @staticmethod
     def _default_embedding_fn(input_ids: Any) -> Any:
@@ -163,7 +203,7 @@ class PipelineParallelEngine:
                     else:
                         x = stage.executor.forward(x, attention_mask=attention_mask)
             elif stage.address:
-                data, shape, dtype = serialize_tensor(x)
+                data, shape, dtype = serialize_tensor(x, compression=self.activation_compression)
                 x = deserialize_tensor(data)
 
         logits = self.final_head_fn(x)

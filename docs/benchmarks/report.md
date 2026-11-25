@@ -74,7 +74,33 @@ Simulates 50 simultaneous incoming requests with random priorities (`HIGH`, `NOR
 
 ---
 
-## 6. How to Reproduce
+## 6. Weight Quantization & Numerical Logit Fidelity (Member 2 Deliverable)
+
+Evaluates memory footprint reduction, inter-node activation compression, and logit concordance across precision modes (FP32, FP16, INT8):
+
+### Weight Memory Footprint (12-Layer Transformer, $d_{\text{model}}=768$):
+| Precision Mode | Model Weight RAM | Compression Ratio | Memory Savings |
+| :--- | :--- | :--- | :--- |
+| **FP32 (Baseline)** | 54.00 MB | 1.00x | 0.0% (Reference) |
+| **FP16 (Half Precision)** | 27.00 MB | 2.00x | **50.0% Reduction** |
+| **INT8 (Dynamic Quantization)** | 13.50 MB | 4.00x | **75.0% Reduction** |
+
+### Inter-Node Activation Transfer Compression ($B=4, S=128, D=768$):
+| Transfer Compression | Activation Payload | Serialization Latency | Bandwidth Savings |
+| :--- | :--- | :--- | :--- |
+| **Uncompressed (FP32)** | 1,536.1 KB | 0.95 ms | Baseline (0.0%) |
+| **FP16 Compression** | 768.1 KB | 1.56 ms | **50.0% Bandwidth Saved** |
+| **Dynamic INT8 Scaled** | 384.4 KB | 2.47 ms | **75.0% Bandwidth Saved** |
+
+### Numerical Logit Fidelity vs. FP32 Baseline (50,257 Vocabulary):
+| Precision Mode | Cosine Similarity | Max Absolute Error | Top-1 Token Concordance |
+| :--- | :--- | :--- | :--- |
+| **FP16** | **1.00000** | 0.00148 | **100% Match** |
+| **INT8** | **0.99982** | 0.03346 | **100% Match** |
+
+---
+
+## 7. How to Reproduce
 
 Run any of the automated benchmarks locally:
 
@@ -90,5 +116,8 @@ python tests/benchmarks/benchmark_memory.py
 
 # 4. 50-Request Concurrency Stress Test
 python tests/benchmarks/benchmark_stress_test.py
+
+# 5. INT8 / FP16 Quantization & Activation Compression
+python tests/benchmarks/benchmark_quantization.py
 ```
 

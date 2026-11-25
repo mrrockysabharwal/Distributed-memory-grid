@@ -90,6 +90,8 @@ class ModelLoadRequest(BaseModel):
     model_id: str = Field(default="distilgpt2", description="Target model ID")
     total_layers: int = Field(default=12, ge=1, le=128, description="Number of transformer layers to partition")
     strategy: str = Field(default="pipeline_layer", description="Partitioning strategy")
+    precision: str = Field(default="fp32", description="Model weight precision: fp32, fp16, int8")
+    activation_compression: Optional[str] = Field(default=None, description="Inter-node activation compression: fp16, int8, or None")
 
 
 class ModelLoadResponse(BaseModel):
@@ -98,6 +100,9 @@ class ModelLoadResponse(BaseModel):
     message: str
     model_id: str
     partition_assignments: Dict[str, List[int]]
+    precision: str = "fp32"
+    memory_savings_percent: float = 0.0
+    compression_ratio: float = 1.0
 
 
 class MetricsResponse(BaseModel):

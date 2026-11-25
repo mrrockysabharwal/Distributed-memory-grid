@@ -6,6 +6,7 @@ Maintained by Member 2 (AI / Model Engineer).
 """
 import logging
 from typing import Tuple, List, Optional, Any
+from backend.inference.quantization import QuantizedTransformerBlock
 
 logger = logging.getLogger("DMG-ModelLoader")
 
@@ -39,10 +40,11 @@ class ModelPartitionLoader:
     Loads pretrained Transformer checkpoints and extracts contiguous subsets
     of decoder blocks for distributed worker nodes.
     """
-    def __init__(self, model_id: str = "distilgpt2", device: str = "cpu"):
+    def __init__(self, model_id: str = "distilgpt2", device: str = "cpu", precision: str = "fp32"):
         self.model_id = model_id
         self.device_str = device
         self.device = torch.device(device) if HAS_TORCH else "cpu"
+        self.precision = precision.lower()
         self.tokenizer = None
         self.full_model = None
 
@@ -94,7 +96,10 @@ class ModelPartitionLoader:
                 logger.warning(f"Could not load checkpoint '{self.model_id}': {e}. Creating synthetic blocks.")
 
         # Synthetic fallback for CPU testing environments
-        blocks = [SyntheticBlock(layer_idx=i) for i in range(total_fallback_layers)]
+        if self.precision in ("int8", "fp16"):
+            blocks = [QuantizedTransformerBlock(layer_idx=i, precision=self.precision) for i in range(total_fallback_layers)]
+        else:
+            blocks = [SyntheticBlock(layer_idx=i) for i in range(total_fallback_layers)]
         return ("synthetic_embeddings", blocks, ("synthetic_norm", "synthetic_head"))
 
     def get_worker_partition_blocks(self, start_layer: int, end_layer: int) -> List[Any]:
