@@ -1,11 +1,17 @@
 """Persistent inference job model."""
 
-from datetime import datetime, timezone
+from __future__ import annotations
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base
+
+if TYPE_CHECKING:
+    from backend.models.user import User
 
 
 def _utc_now() -> datetime:
@@ -20,6 +26,15 @@ class InferenceJob(Base):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     max_new_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    user: Mapped[User | None] = relationship(
+        "User",
+        back_populates="inference_jobs",
+    )
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
