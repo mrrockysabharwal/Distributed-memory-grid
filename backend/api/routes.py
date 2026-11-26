@@ -11,11 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from backend.api.auth import get_current_user, router as auth_router
 from backend.core.database import get_db
+from backend.models.user import User
 from backend.monitoring.telemetry import get_system_telemetry
 from backend.services.job_service import create_job, get_job
 
 router = APIRouter()
+router.include_router(auth_router, prefix="/auth", tags=["auth"])
 
 
 class GenerateRequest(BaseModel):
@@ -26,13 +29,12 @@ class GenerateRequest(BaseModel):
     request_id: Optional[str] = None
 
 
-class ModelLoadRequest(BaseModel):
-    model_id: str = "distilgpt2"
-    strategy: str = "pipeline_layer"
-
-
 @router.post("/inference/generate")
-def generate_inference(req: GenerateRequest, db: Session = Depends(get_db)):
+def generate_inference(
+    req: GenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     job_id = req.request_id or str(uuid.uuid4())
     job = create_job(
         db,
@@ -41,6 +43,7 @@ def generate_inference(req: GenerateRequest, db: Session = Depends(get_db)):
         prompt=req.prompt,
         max_new_tokens=req.max_new_tokens,
         temperature=req.temperature,
+        user=current_user,
     )
     return {
         "job_id": job.job_id,
@@ -49,13 +52,17 @@ def generate_inference(req: GenerateRequest, db: Session = Depends(get_db)):
         "prompt": job.prompt,
         "max_new_tokens": job.max_new_tokens,
         "temperature": job.temperature,
-        "websocket_url": f"/ws/inference/{job.job_id}",
+        "websocket_url": f"/api/ws/inference/{job.job_id}",
     }
 
 
 @router.get("/inference/jobs/{job_id}")
-def get_inference_job(job_id: str, db: Session = Depends(get_db)):
-    job = get_job(db, job_id)
+def get_inference_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = get_job(db, job_id, current_user.id)
     if job is None:
         raise HTTPException(status_code=404, detail="Inference job not found")
 
@@ -73,7 +80,7 @@ def get_inference_job(job_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/workers")
+@router.get("/workers", dependencies=[Depends(get_current_user)])
 async def list_workers():
     # Placeholder returning sample worker structure
     return {
@@ -98,7 +105,7 @@ async def list_workers():
     }
 
 
-@router.get("/cluster/status")
+@router.get("/cluster/status", dependencies=[Depends(get_current_user)])
 async def cluster_status():
     telemetry = get_system_telemetry()
     return {
@@ -110,15 +117,17 @@ async def cluster_status():
 
 
 @router.post("/models/load")
-async def load_model(req: ModelLoadRequest):
-    return {
-        "status": "success",
-        "message": f"Model '{req.model_id}' partitioned and loaded across active cluster workers.",
-        "model_id": req.model_id,
-    }
+async def load_model():
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Model loading is disabled because administrative authorization "
+            "is not configured."
+        ),
+    )
 
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=[Depends(get_current_user)])
 async def get_metrics():
     return {
         "ttft_seconds_avg": 0.12,

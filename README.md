@@ -80,11 +80,17 @@ distributed-memory-grid/
 
 ### REST & WebSocket Gateway
 - `POST /api/inference/generate` - Submit prompt for generation
-- `GET /api/workers` - List registered workers, assigned partitions, and health
-- `GET /api/cluster/status` - Cluster health and master node telemetry
-- `POST /api/models/load` - Trigger model weight download and partition loading
-- `GET /api/metrics` - TTFT, tokens/sec, and per-worker memory metrics
-- `WS /ws/inference/{job_id}` - Real-time token streaming channel
+- `GET /api/workers` - Authenticated list of workers, assigned partitions, and health
+- `GET /api/cluster/status` - Authenticated cluster health and master telemetry
+- `POST /api/models/load` - Disabled until administrative authorization is configured
+- `GET /api/metrics` - Authenticated TTFT, tokens/sec, and per-worker memory metrics
+- `GET /health` - Public health check
+- `WS /api/ws/inference/{job_id}` - Real-time token streaming channel
+
+**Security follow-up:** The WebSocket endpoint remains unauthenticated and does not
+verify job ownership. Add authentication and owner validation before exposing
+real inference output. The generated WebSocket URL includes the `/api` prefix
+and matches the route registered by the API application.
 
 ### gRPC Control & Data RPCs
 - `RegisterWorker` / `Heartbeat` - Worker discovery, capability advertisement, liveness
