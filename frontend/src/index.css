@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --dmg-page: 249 251 248;
+  --dmg-surface: 255 255 255;
+  --dmg-surface-alt: 239 246 240;
+  --dmg-text: 19 29 21;
+  --dmg-muted: 63 81 67;
+  --dmg-subtle: 90 108 95;
+  --dmg-line: 39 70 45;
+  --dmg-accent: 32 79 46;
+  --dmg-accent-hover: 26 65 38;
+  --dmg-accent-soft: 220 234 221;
+  --dmg-accent-text: 249 251 249;
+  --dmg-indicator: 112 122 115;
+  --dmg-hero-gradient: 249 251 248;
+  font-family: "Segoe UI Variable", "Aptos", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: rgb(var(--dmg-page));
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --dmg-page: 9 14 10;
+  --dmg-surface: 15 23 17;
+  --dmg-surface-alt: 22 33 23;
+  --dmg-text: 237 244 237;
+  --dmg-muted: 168 183 169;
+  --dmg-subtle: 149 166 151;
+  --dmg-line: 125 153 126;
+  --dmg-accent: 82 135 88;
+  --dmg-accent-hover: 97 155 103;
+  --dmg-accent-soft: 28 48 30;
+  --dmg-accent-text: 247 249 247;
+  --dmg-indicator: 122 135 124;
+  --dmg-hero-gradient: 9 14 10;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: rgb(var(--dmg-page));
+  color: rgb(var(--dmg-text));
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgb(var(--dmg-accent));
+  color: rgb(var(--dmg-accent-text));
+}
+
+.hero-atmosphere {
+  background:
+    radial-gradient(ellipse 58% 58% at 50% 34%, rgb(var(--dmg-accent) / 0.13), transparent 76%),
+    linear-gradient(
+      180deg,
+      rgb(var(--dmg-hero-gradient) / 0.28) 0%,
+      rgb(var(--dmg-hero-gradient) / 0.32) 48%,
+      rgb(var(--dmg-hero-gradient) / 0.96) 100%
+    );
+}
+
+.network-lines {
+  opacity: 0.13;
+  animation: network-drift 70s ease-in-out infinite alternate;
+}
+
+:root[data-theme="dark"] .hero-atmosphere {
+  background:
+    radial-gradient(ellipse 58% 58% at 50% 34%, rgb(var(--dmg-accent) / 0.28), transparent 76%),
+    linear-gradient(
+      180deg,
+      rgb(var(--dmg-hero-gradient) / 0.18) 0%,
+      rgb(var(--dmg-hero-gradient) / 0.32) 48%,
+      rgb(var(--dmg-hero-gradient) / 0.97) 100%
+    );
+}
+
+:root[data-theme="dark"] .network-lines {
+  opacity: 0.27;
+}
+
+.network-wash {
+  background: radial-gradient(
+    ellipse 68% 60% at 50% 32%,
+    rgb(var(--dmg-accent) / 0.08),
+    transparent 78%
+  );
+}
+
+.network-node {
+  animation: network-pulse 5.4s ease-in-out infinite;
+}
+
+@keyframes network-drift {
+  from {
+    transform: translate3d(-0.6%, -0.4%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(0.6%, 0.4%, 0) scale(1.025);
+  }
+}
+
+@keyframes network-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-lines,
+  .network-node {
+    animation: none;
+  }
+}
