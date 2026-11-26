@@ -1,144 +1,186 @@
 # Distributed Memory Grid for Real-Time LLM Inference
 
-A lightweight, modular distributed inference engine built with **PyTorch**, **gRPC**, **FastAPI**, and **React**. The project partitions Large Language Models (LLMs) across multiple worker nodes to enable inference without requiring any single node to fit the full model weights into memory.
+Distributed Memory Grid (DMG) is a project to explore running large language model inference across multiple machines. Its intended approach is to split model layers between worker nodes, pass intermediate activations between stages, and expose inference and cluster controls through an API and web interface.
 
----
+The repository contains frontend and backend foundations for that design. The current master and worker processes do not yet implement a functioning distributed inference cluster; see [Current status](#current-status) before trying the orchestration components.
 
-## 1. Core Architecture
+## Objectives and architecture
 
-The system decouples control coordination from heavy activation transfer:
+The architecture specification in [`docs/architecture/overview.md`](docs/architecture/overview.md) describes the project goals:
 
-```
-[ User Browser (React + Vite) ]
-             |
-             v  (REST / WebSocket Streaming)
-[ FastAPI API Gateway ]
-             |
-             v  (Async Queue & State)
-[ Master Controller / Scheduler ]
-     |              |              |  (gRPC Control Plane)
-     v              v              v
-[ Worker 1 ] ----> [ Worker 2 ] ----> [ Worker 3 ]
-(Layers 0-3)       (Layers 4-7)       (Layers 8-11)
-      \----------------- Data Plane (Tensor Activations)
-```
+- Use pipeline/model-layer parallelism to distribute a model across machines whose individual memory may be insufficient for the full model.
+- Separate coordination (worker registration, heartbeats, and partition assignment) from data transfer (intermediate model activations).
+- Provide an API gateway for inference requests and streamed output, with a web frontend for cluster and job views.
 
-- **Control Plane**: gRPC for worker registration, periodic heartbeats, memory/CPU telemetry, model partition assignment, and failure detection.
-- **Data Plane**: Inter-node serialized tensor activations passed stage-by-stage across worker processes.
-- **Inference Engine**: Autoregressive decoding loop, KV-cache tracking, token sampling, and WebSocket streaming.
-
----
-
-## 2. Directory Layout
+The repository currently has these corresponding foundations:
 
 ```text
-distributed-memory-grid/
+Browser (React + Vite)             [routes; no API calls yet]
+
+FastAPI gateway (backend/api) ----> SQLite user/job persistence
+
+Master/controller + scheduler      [standalone scaffold]
+Worker process + executor          [standalone scaffold]
+proto/cluster.proto                 [declared contracts; not wired into these processes]
+```
+
+The API application mounts its routes under `/api` and exposes a public `/health` endpoint. The master, worker, scheduler, executor, generation, and tensor communication modules are separate foundations, not a fully connected runtime. In particular, the current controller and worker entry points do not start gRPC servers or communicate with each other.
+
+## Technology stack
+
+- **Backend:** Python, FastAPI, Pydantic Settings, SQLAlchemy, Alembic, PyTorch, Transformers, gRPC/protobuf.
+- **Frontend:** React 18, Vite 8, React Router 7, Tailwind CSS 3, Lucide React.
+- **Persistence:** SQLite by default, with SQLAlchemy and Alembic migrations.
+- **Tests:** pytest for backend unit tests; the frontend package currently provides a production build command but no test script.
+- **Containers:** Docker Compose definitions for a master process and two worker processes.
+
+## Repository structure
+
+```text
+.
 ├── backend/
-│   ├── master/          # Worker registry, scheduler, cluster coordinator
-│   ├── worker/          # Worker node daemon and layer executor
-│   ├── distributed/     # Tensor serialization and inter-node communicator
-│   ├── inference/       # HF model slicing, autoregressive generation, KV cache
-│   ├── api/             # FastAPI gateway and WebSocket streaming routes
-│   └── monitoring/      # psutil/NVML telemetry, TTFT and tokens/sec metrics
-├── frontend/            # React + Vite + Tailwind dashboard & chat console
-├── proto/               # gRPC protobuf service definitions (cluster.proto)
-├── docker/              # Dockerfile definitions for master and worker containers
-├── docs/                # Architecture specifications and benchmark reports
-├── tests/               # Unit, integration, and benchmark tests
-├── docker-compose.yml   # Multi-worker local cluster orchestration
-├── requirements.txt     # Python dependencies
+│   ├── api/             # FastAPI app, authentication, and REST/WebSocket routes
+│   ├── core/            # Settings and database setup
+│   ├── distributed/     # Tensor communication and pipeline-parallel foundations
+│   ├── inference/       # Model loading, generation, and KV-cache modules
+│   ├── master/          # Worker registry, controller, and scheduler
+│   ├── models/          # SQLAlchemy models
+│   ├── monitoring/      # System telemetry and metrics
+│   ├── schemas/         # API schemas
+│   ├── services/        # Authentication, user, and inference-job services
+│   └── worker/          # Worker process and partition executor
+├── docker/
+│   └── Dockerfile.backend
+├── docs/
+│   ├── architecture/overview.md
+│   ├── development-log.md
+│   └── frontend-architecture.md
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   └── services/
+│   └── package.json
+├── migrations/          # Alembic environment and database revisions
+├── proto/cluster.proto  # Declared gRPC service/message contracts
+├── tests/unit/          # Backend unit tests
+├── .env.example
+├── docker-compose.yml
+├── requirements.txt
 └── README.md
 ```
 
----
+## Backend setup
 
-## 3. Four-Member Team Ownership
+The Dockerfile targets Python 3.11. From the repository root, create and activate a virtual environment, then install the declared Python dependencies:
 
-| Member | Role | Key Ownership | Concrete Deliverables |
-| :--- | :--- | :--- | :--- |
-| **Member 1** | **Distributed Systems Lead** | Master controller, gRPC, worker discovery, heartbeats, lifecycle | `backend/master/`, `proto/`, worker registry & health tests |
-| **Member 2** | **AI / Model Engineer** | PyTorch model partitioning, stage execution, forward pass correctness | `backend/distributed/`, `backend/worker/executor.py`, model tests |
-| **Member 3** | **Inference Optimization Engineer** | KV cache, request queue, continuous batching, memory benchmarks | `backend/inference/kv_cache.py`, `scheduler.py`, benchmarks |
-| **Member 4** | **Full-Stack & DevOps Lead** | FastAPI gateway, React chat/dashboard, Docker Compose, metrics | `backend/api/`, `frontend/`, `docker/`, telemetry & reports |
-
----
-
-## 4. Four-Week Milestone Roadmap
-
-- **Week 1 (Foundation)**: Master-worker gRPC registration and heartbeats. Single-node model baseline and layer slicing. FastAPI & React shells.
-  - *Acceptance Gate*: Two workers register with master and report health; model runs on single node.
-- **Week 2 (Cross-Node Execution)**: Worker dispatch, sequential cross-node layer forward passes. Basic request queue and memory monitoring.
-  - *Acceptance Gate*: Model stages execute across $\ge 2$ worker processes with matching deterministic output.
-- **Week 3 (Streaming & Scheduling)**: Autoregressive token generation loop, streaming to frontend over WebSockets, continuous batching experiments.
-  - *Acceptance Gate*: Prompts submitted from web UI, tokens stream in real time, requests scheduled.
-- **Week 4 (Benchmarks & Delivery)**: Stress testing, worker failure handling/retry, TTFT & tokens/sec benchmarks, Docker reproducibility, final demo.
-  - *Acceptance Gate*: Reproducible cluster deployment, benchmark graphs, tested fault-tolerance, and final demonstration.
-
----
-
-## 5. API Contracts
-
-### REST & WebSocket Gateway
-- `POST /api/inference/generate` - Submit prompt for generation
-- `GET /api/workers` - Authenticated list of workers, assigned partitions, and health
-- `GET /api/cluster/status` - Authenticated cluster health and master telemetry
-- `POST /api/models/load` - Disabled until administrative authorization is configured
-- `GET /api/metrics` - Authenticated TTFT, tokens/sec, and per-worker memory metrics
-- `GET /health` - Public health check
-- `WS /api/ws/inference/{job_id}` - Real-time token streaming channel
-
-**Security follow-up:** The WebSocket endpoint remains unauthenticated and does not
-verify job ownership. Add authentication and owner validation before exposing
-real inference output. The generated WebSocket URL includes the `/api` prefix
-and matches the route registered by the API application.
-
-### gRPC Control & Data RPCs
-- `RegisterWorker` / `Heartbeat` - Worker discovery, capability advertisement, liveness
-- `LoadPartition` - Dynamic layer assignment (e.g. layers 0-3 on Worker A)
-- `ExecutePartition` - Forward pass of tensor activations through assigned layers
-- `ClearCache` - Eviction of per-request KV cache
-
----
-
-## 6. Quickstart & Local Setup
-
-### 1. Prerequisites
-- Python 3.11+
-- Node.js 18+ (for frontend)
-- Docker & Docker Compose (optional, for containerized run)
-
-### 2. Python Environment Setup
-```bash
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-pip install -r requirements.txt
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-### 3. Compile Protocol Buffers
-```bash
-python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. proto/cluster.proto
+On macOS or Linux, activate with `source .venv/bin/activate` and copy the environment file with `cp .env.example .env`.
+
+### Environment configuration
+
+The root [`.env.example`](.env.example) contains backend settings, including the API host/port, CORS origins, database URL, and JWT options. The example JWT secret is deliberately a placeholder and is rejected by the settings validator. Replace it in `.env` with a locally generated secret of at least 32 characters. For example:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-### 4. Run the API Gateway & Master
-```bash
+The checked-in example uses `sqlite:///./data/inference_jobs.db`. `DATABASE_URL` can be changed to another SQLAlchemy database URL. `CORS_ORIGINS` must contain one or more explicit HTTP(S) origins; the example allows the Vite development origin `http://localhost:5173`.
+
+The frontend's optional `VITE_API_BASE_URL` is separate from the backend `.env.example`. The frontend API service defaults it to `http://localhost:8000/api`; frontend pages do not currently call that service.
+
+### Database and API gateway
+
+With a valid backend `.env` in place, run database migrations from the repository root:
+
+```powershell
+python -m alembic upgrade head
+```
+
+Then start the FastAPI gateway:
+
+```powershell
 python -m backend.api.main
 ```
 
-### 5. Launch Worker Nodes
-```bash
-# Terminal 1: Worker 1
-python -m backend.worker.worker_node --worker-id worker-1 --port 50052
+The default settings bind the API to `0.0.0.0:8000`; the local health check is `http://localhost:8000/health`. Settings are loaded from `.env` and validated at startup, including the JWT secret.
 
-# Terminal 2: Worker 2
-python -m backend.worker.worker_node --worker-id worker-2 --port 50053
+### Master, workers, and Docker Compose
+
+The master and worker entry points can be run separately:
+
+```powershell
+python -m backend.master.controller
+python -m backend.worker.worker_node --worker-id worker-1 --port 50052 --master-address localhost:50051
 ```
 
-### 6. Run via Docker Compose
-```bash
+These are currently process-loop scaffolds: the controller runs a periodic registry check, and the worker logs local CPU/memory heartbeats. They do not bind the declared gRPC ports or exchange RPCs. The gRPC services and messages in [`proto/cluster.proto`](proto/cluster.proto) are contracts, not evidence that these RPCs are implemented.
+
+The current Compose file can be started from the repository root with:
+
+```powershell
 docker compose up --build
 ```
 
+It launches the master controller and two worker processes. Although the Compose file publishes port `8000`, its `master` command overrides the Dockerfile's API command, so Compose does **not** currently start the FastAPI gateway. The Compose setup is therefore not an end-to-end inference deployment.
+
+## Frontend setup
+
+Vite 8 requires Node.js `^20.19.0` or `>=22.12.0`. From the frontend directory:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The development server prints its local URL (normally `http://localhost:5173`). To create a production build:
+
+```powershell
+npm run build
+```
+
+The frontend routes are `/` (Overview), `/workers`, `/models`, `/inference`, and `/jobs`. Unknown paths redirect to `/`. The dark theme is the default, with a persistent light/dark toggle.
+
+## Backend API currently exposed
+
+The FastAPI application currently declares these routes:
+
+- `GET /health` — public gateway health response.
+- `POST /api/auth/register` and `POST /api/auth/login` — account registration and bearer-token login.
+- `POST /api/inference/generate` and `GET /api/inference/jobs/{job_id}` — create and retrieve an authenticated user's job record.
+- `GET /api/workers`, `GET /api/cluster/status`, and `GET /api/metrics` — authenticated monitoring routes. Worker details and several reported values are sample data, not connected cluster measurements.
+- `POST /api/models/load` — currently returns `501 Not Implemented`.
+- `WS /api/ws/inference/{job_id}` — currently emits a fixed demonstration token sequence. It is not connected to the generation engine, does not authenticate the socket, and does not verify job ownership.
+
+These routes are backend scaffolding and are not integrated into the frontend. The frontend displays a neutral “Not connected” status and does not claim live worker, model, job, or inference data.
+
+## Tests
+
+Backend unit tests are in `tests/unit/` and use pytest. After installing the Python requirements and configuring a valid `.env`:
+
+```powershell
+python -m pytest tests/unit
+```
+
+The frontend has no test command in `frontend/package.json`; use `npm run build` to validate its production bundle.
+
+## Current status and next integration phases
+
+**Present:** a routed React frontend with responsive navigation and theme persistence; a FastAPI application with authentication routes, SQLite-backed user/job models, migrations, and health check; backend modules for scheduling, partition execution, generation, and telemetry; and protobuf service definitions.
+
+**Still placeholder or disconnected:** frontend API/auth integration; live worker/model/job views; actual model dispatch through the master and workers; active gRPC service implementations; end-to-end generated-token streaming; and Compose startup of the API gateway.
+
+The following are proposed next phases based on those repository gaps, not a committed schedule:
+
+1. Implement and connect the master/worker gRPC control and execution services defined in `proto/cluster.proto`.
+2. Connect API job lifecycle and the inference generation pipeline to real model execution and authenticated streaming.
+3. Replace sample worker, cluster, and metrics responses with live runtime state; add WebSocket authentication and job-ownership checks.
+4. Integrate frontend authentication and API calls, then populate worker, model, inference, and job-history pages from backend data.
+5. Update Compose to launch and configure the API gateway alongside the coordinator and workers, with suitable health checks.
