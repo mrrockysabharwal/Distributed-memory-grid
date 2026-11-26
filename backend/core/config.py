@@ -31,6 +31,56 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:5173"]
     database_url: str = f"sqlite:///{_DEFAULT_DATABASE_PATH.as_posix()}"
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def validate_jwt_secret_key(cls, secret: str) -> str:
+        normalized = secret.strip()
+        insecure_placeholders = {
+            "change-me",
+            "changeme",
+            "change_me",
+            "example",
+            "secret",
+            "password",
+            "jwt-secret",
+            "jwt_secret",
+        }
+
+        if not normalized:
+            raise ValueError("JWT_SECRET_KEY must be supplied through the environment")
+        if len(normalized) < 32:
+            raise ValueError("JWT_SECRET_KEY must contain at least 32 characters")
+        if normalized.lower().startswith(("change_me", "change-me", "changeme")):
+            raise ValueError("JWT_SECRET_KEY must not use an example or placeholder")
+        if normalized.lower() in insecure_placeholders:
+            raise ValueError("JWT_SECRET_KEY is insecure")
+
+        return normalized
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def validate_jwt_algorithm(cls, algorithm: str) -> str:
+        normalized = algorithm.strip().upper()
+        if normalized != "HS256":
+            raise ValueError("JWT_ALGORITHM must be HS256")
+        return normalized
+
+    @field_validator("access_token_expire_minutes")
+    @classmethod
+    def validate_access_token_expire_minutes(cls, minutes: int) -> int:
+        if minutes <= 0:
+            raise ValueError(
+                "ACCESS_TOKEN_EXPIRE_MINUTES must be greater than zero"
+            )
+        if minutes > 10080:
+            raise ValueError(
+                "ACCESS_TOKEN_EXPIRE_MINUTES must not exceed 10080 minutes"
+            )
+        return minutes
 
     @field_validator("log_level")
     @classmethod
