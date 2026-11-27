@@ -228,6 +228,205 @@ Administrator endpoint to evict all active KV-cache allocations, clear pending r
 
 ---
 
+### 1.10 `POST /admin/auth/token`
+Generate a time-limited HMAC join token for secure worker registration.
+
+**Request Body:**
+```json
+{
+  "ttl_seconds": 3600.0
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "token": "xK9m2v7n...",
+  "expires_in_seconds": 3600.0,
+  "message": "Distribute this token to the worker node out-of-band."
+}
+```
+
+---
+
+### 1.11 `POST /admin/auth/register`
+Register a worker using HMAC-authenticated join token (secure cluster join).
+
+**Request Body:**
+```json
+{
+  "worker_id": "worker-3",
+  "token": "xK9m2v7n...",
+  "signature": "a1b2c3d4e5f6...",
+  "timestamp": 1700850000.0,
+  "address": "10.0.0.5:50054",
+  "device_type": "cuda",
+  "total_memory": 17179869184,
+  "available_memory": 12884901888
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "status": "authorized",
+  "worker_id": "worker-3",
+  "message": "Worker 'worker-3' authenticated and registered."
+}
+```
+
+**Error Response (`403 Forbidden`):**
+```json
+{
+  "detail": "Worker join rejected: invalid_signature"
+}
+```
+
+---
+
+### 1.12 `GET /admin/auth/audit`
+Retrieve authentication audit log (token creation, join acceptance/rejection events).
+
+**Query Parameters:**
+- `limit` (int, default: 50): Maximum number of audit events to return.
+
+**Response (`200 OK`):**
+```json
+{
+  "events": [
+    {
+      "timestamp": 1700850000.0,
+      "event_type": "join_accepted",
+      "worker_id": "worker-3",
+      "token_prefix": "xK9m2v7n",
+      "reason": null,
+      "source_address": "10.0.0.5:50054"
+    }
+  ],
+  "total_count": 1
+}
+```
+
+---
+
+### 1.13 `GET /admin/auth/stats`
+Get cluster authentication system statistics.
+
+**Response (`200 OK`):**
+```json
+{
+  "require_auth": true,
+  "active_tokens": 2,
+  "used_tokens": 1,
+  "expired_tokens": 0,
+  "authorized_workers": 3,
+  "total_audit_events": 5
+}
+```
+
+---
+
+### 1.14 `GET /cache/prefix/stats`
+Get prefix KV-cache reuse statistics for shared prompt prefix optimization.
+
+**Response (`200 OK`):**
+```json
+{
+  "prefix_cache_hits": 45,
+  "prefix_cache_misses": 12,
+  "hit_rate": 0.7895,
+  "total_tokens_saved": 2850,
+  "stored_entries": 18,
+  "max_entries": 256,
+  "min_prefix_length": 4
+}
+```
+
+---
+
+### 1.15 `POST /cache/prefix/clear`
+Clear all stored prefix cache entries.
+
+**Response (`200 OK`):**
+```json
+{
+  "status": "ok",
+  "message": "Prefix cache cleared."
+}
+```
+
+---
+
+### 1.16 `GET /admin/retry/stats`
+Get job retry system statistics.
+
+**Response (`200 OK`):**
+```json
+{
+  "total_tracked_jobs": 100,
+  "total_retries": 8,
+  "total_recoveries": 6,
+  "total_dead_lettered": 2,
+  "active_checkpoints": 3,
+  "dead_letter_queue_size": 2,
+  "job_state_counts": {
+    "running": 3,
+    "completed": 95,
+    "dead_lettered": 2
+  },
+  "policy": {
+    "max_retries": 3,
+    "base_delay_seconds": 1.0,
+    "checkpoint_interval_tokens": 10
+  }
+}
+```
+
+---
+
+### 1.17 `GET /admin/retry/dead-letter`
+Retrieve dead-lettered jobs that exhausted all retry attempts.
+
+**Query Parameters:**
+- `limit` (int, default: 20): Maximum entries to return.
+
+**Response (`200 OK`):**
+```json
+{
+  "dead_letter_queue": [
+    {
+      "request_id": "failed-job-123",
+      "total_attempts": 4,
+      "last_reason": "worker_crash",
+      "last_error": "Worker segfault during layer 7",
+      "dead_lettered_at": 1700855000.0
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### 1.18 `POST /admin/retry/dead-letter/{request_id}/retry`
+Manually retry a dead-lettered job (admin intervention).
+
+**Response (`200 OK`):**
+```json
+{
+  "status": "retrying",
+  "request_id": "failed-job-123",
+  "resume_state": {
+    "has_checkpoint": true,
+    "resume_from_token": 25,
+    "generated_so_far": [100, 101, 102],
+    "attempt": 0
+  }
+}
+```
+
+---
+
 ## 2. WebSocket Real-Time Streaming Channel
 
 Endpoint: `ws://localhost:8000/ws/inference/{job_id}`

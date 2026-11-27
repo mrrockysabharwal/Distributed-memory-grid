@@ -100,7 +100,52 @@ Evaluates memory footprint reduction, inter-node activation compression, and log
 
 ---
 
-## 7. How to Reproduce
+## 7. High-Priority Innovation Systems
+
+### 7.1 Secure Cluster Authentication (HMAC-SHA256 Worker Join)
+
+The cluster authentication subsystem provides mutual trust between Master Controller and Worker nodes via:
+
+| Security Feature | Implementation |
+| :--- | :--- |
+| **Token Generation** | Cryptographic `secrets.token_urlsafe(32)` with configurable TTL |
+| **Signing Algorithm** | HMAC-SHA256 over `{worker_id}:{token}:{timestamp}` |
+| **Key Derivation** | SHA-256 of `{master_secret}:cluster-join` context |
+| **Replay Protection** | Single-use tokens consumed on first successful verification |
+| **Clock Skew Tolerance** | Configurable (default: ±300 seconds) |
+| **Token Revocation** | Admin can revoke tokens before use |
+| **Audit Trail** | Full event log of token creation, join acceptance/rejection |
+
+### 7.2 Prefix KV-Cache Reuse Engine
+
+Trie-based longest-common-prefix matching enables KV state reuse across requests sharing system prompts:
+
+| Feature | Detail |
+| :--- | :--- |
+| **Data Structure** | Token-ID trie with KV state snapshots at terminal nodes |
+| **Prefix Matching** | O(L) lookup where L = prompt length |
+| **Copy-on-Write** | Shared prefix states are deep-copied on population |
+| **Eviction Policy** | LRU eviction when `max_entries` is reached |
+| **Min Threshold** | Configurable minimum prefix length (default: 4 tokens) |
+| **TTFT Reduction** | Proportional to matched prefix length (skips redundant prefill) |
+
+### 7.3 Mid-Generation Job Retry & Checkpoint Recovery
+
+Automatic retry with exponential backoff for jobs that fail mid-generation:
+
+| Feature | Detail |
+| :--- | :--- |
+| **Checkpoint Interval** | Every N tokens (configurable, default: 10) |
+| **Retry Policy** | Configurable max retries, base delay, backoff multiplier, max delay |
+| **Backoff Formula** | $\text{delay} = \min(\text{base} \times 2^{\text{attempt}},\; \text{max\_delay})$ |
+| **Failure Categories** | Worker crash, OOM, timeout, network error (filterable) |
+| **Resume Strategy** | Restart from last checkpoint (skip completed prefill) |
+| **Dead-Letter Queue** | Jobs exhausting all retries are queued for manual admin retry |
+| **Recovery Tracking** | Stats track total retries, successful recoveries, dead-lettered jobs |
+
+---
+
+## 8. How to Reproduce
 
 Run any of the automated benchmarks locally:
 

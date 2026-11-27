@@ -112,3 +112,67 @@ class MetricsResponse(BaseModel):
     total_processed_requests: int
     kv_cache_memory_mb: float
     kv_cache_hit_rate: float
+
+
+# --- Cluster Auth Schemas ---
+
+class JoinTokenRequest(BaseModel):
+    """Request to create a new worker join token."""
+    ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86400.0, description="Token time-to-live in seconds")
+
+
+class JoinTokenResponse(BaseModel):
+    """Response containing the generated join token."""
+    token: str
+    expires_in_seconds: float
+    message: str
+
+
+class WorkerAuthRequest(BaseModel):
+    """Worker authentication payload for secure cluster joining."""
+    worker_id: str = Field(..., description="Unique worker identifier")
+    token: str = Field(..., description="Join token issued by admin")
+    signature: str = Field(..., description="HMAC-SHA256 signature")
+    timestamp: float = Field(..., description="Unix timestamp of the request")
+    address: str = Field(default="unknown", description="Worker network address")
+    device_type: str = Field(default="cpu", description="Worker device type")
+    total_memory: int = Field(default=8589934592, description="Total memory in bytes")
+    available_memory: int = Field(default=6442450944, description="Available memory in bytes")
+
+
+class AuthAuditResponse(BaseModel):
+    """Audit log of authentication events."""
+    events: List[Dict[str, Any]]
+    total_count: int
+
+
+# --- Retry / Checkpoint Schemas ---
+
+class RetryStatsResponse(BaseModel):
+    """Job retry system statistics."""
+    total_tracked_jobs: int
+    total_retries: int
+    total_recoveries: int
+    total_dead_lettered: int
+    active_checkpoints: int
+    dead_letter_queue_size: int
+
+
+class DeadLetterItem(BaseModel):
+    """A dead-lettered inference job."""
+    request_id: str
+    total_attempts: int
+    last_reason: str
+    last_error: str
+    dead_lettered_at: float
+
+
+# --- Prefix Cache Schemas ---
+
+class PrefixCacheStatsResponse(BaseModel):
+    """Prefix KV-cache reuse statistics."""
+    prefix_cache_hits: int
+    prefix_cache_misses: int
+    hit_rate: float
+    total_tokens_saved: int
+    stored_entries: int

@@ -33,7 +33,16 @@ from backend.api.schemas import (
     ModelLoadRequest,
     ModelLoadResponse,
     MetricsResponse,
+    JoinTokenRequest,
+    JoinTokenResponse,
+    WorkerAuthRequest,
+    AuthAuditResponse,
+    RetryStatsResponse,
+    PrefixCacheStatsResponse,
 )
+from backend.security.cluster_auth import ClusterAuthManager
+from backend.inference.prefix_cache import PrefixCacheManager
+from backend.inference.job_retry import JobRetryManager, RetryPolicy
 
 router = APIRouter()
 
@@ -90,6 +99,16 @@ class ClusterState:
             kv_cache_mgr=self.kv_cache_mgr,
         )
         self.requests_map: Dict[str, GenerationRequest] = {}
+
+        # --- New innovation subsystems ---
+        self.auth_manager = ClusterAuthManager(require_auth=False)
+        self.prefix_cache = PrefixCacheManager(
+            kv_cache_mgr=self.kv_cache_mgr,
+            min_prefix_length=4,
+        )
+        self.job_retry_mgr = JobRetryManager(
+            policy=RetryPolicy(max_retries=3, checkpoint_interval_tokens=10),
+        )
 
 
 # Global cluster singleton
@@ -348,3 +367,112 @@ def reset_cluster():
     cluster.cancelled_jobs.clear()
     cluster.requests_map.clear()
     return {"status": "ok", "message": "Cluster cache and state successfully reset."}
+
+
+# =============================================================================
+# Secure Cluster Auth Routes
+# =============================================================================
+
+@router.post("/admin/auth/token")
+def create_join_token(req: JoinTokenRequest):
+    """Generate a time-limited join token for worker authentication."""
+    try:
+        token = cluster.auth_manager.create_join_token(ttl_seconds=req.ttl_seconds)
+        return {
+            "token": token,
+            "expires_in_seconds": req.ttl_seconds,
+            "message": "Distribute this token to the worker node out-of-band.",
+        }
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
+
+@router.post("/admin/auth/register")
+def authenticated_worker_register(req: WorkerAuthRequest):
+    """Register a worker using HMAC-authenticated join token."""
+    result = cluster.auth_manager.verify_worker_join(
+        worker_id=req.worker_id,
+        token=req.token,
+        signature=req.signature,
+        timestamp=req.timestamp,
+        source_address=req.address,
+    )
+    if not result["authorized"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Worker join rejected: {result['reason']}",
+        )
+
+    # Proceed with standard worker registration
+    cluster.registry.register(
+        worker_id=req.worker_id,
+        address=req.address,
+        device_type=req.device_type,
+        total_memory=req.total_memory,
+        available_memory=req.available_memory,
+    )
+    return {
+        "status": "authorized",
+        "worker_id": req.worker_id,
+        "message": f"Worker '{req.worker_id}' authenticated and registered.",
+    }
+
+
+@router.get("/admin/auth/audit")
+def get_auth_audit(limit: int = 50):
+    """Retrieve authentication audit log."""
+    events = cluster.auth_manager.get_audit_log(limit=limit)
+    return {"events": events, "total_count": len(events)}
+
+
+@router.get("/admin/auth/stats")
+def get_auth_stats():
+    """Get cluster authentication system statistics."""
+    return cluster.auth_manager.stats()
+
+
+# =============================================================================
+# Prefix KV-Cache Reuse Routes
+# =============================================================================
+
+@router.get("/cache/prefix/stats")
+def get_prefix_cache_stats():
+    """Get prefix KV-cache reuse statistics."""
+    return cluster.prefix_cache.stats()
+
+
+@router.post("/cache/prefix/clear")
+def clear_prefix_cache():
+    """Clear all stored prefix cache entries."""
+    cluster.prefix_cache.clear()
+    return {"status": "ok", "message": "Prefix cache cleared."}
+
+
+# =============================================================================
+# Job Retry / Checkpoint Routes
+# =============================================================================
+
+@router.get("/admin/retry/stats")
+def get_retry_stats():
+    """Get job retry system statistics."""
+    return cluster.job_retry_mgr.stats()
+
+
+@router.get("/admin/retry/dead-letter")
+def get_dead_letter_queue(limit: int = 20):
+    """Retrieve dead-lettered jobs that exhausted all retries."""
+    items = cluster.job_retry_mgr.get_dead_letter_queue(limit=limit)
+    return {"dead_letter_queue": items, "count": len(items)}
+
+
+@router.post("/admin/retry/dead-letter/{request_id}/retry")
+def retry_dead_lettered_job(request_id: str):
+    """Manually retry a dead-lettered job."""
+    result = cluster.job_retry_mgr.retry_dead_letter(request_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Job '{request_id}' not found in dead-letter queue.")
+    return {
+        "status": "retrying",
+        "request_id": request_id,
+        "resume_state": result,
+    }

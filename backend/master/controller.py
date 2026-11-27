@@ -14,6 +14,7 @@ from backend.master.registry import WorkerRegistry, WorkerInfo
 from backend.master.scheduler import RequestScheduler
 from backend.inference.kv_cache import KVCacheManager
 from backend.monitoring.metrics import MetricsCollector
+from backend.security.cluster_auth import ClusterAuthManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DMG-Master")
@@ -32,6 +33,8 @@ class MasterController:
         grpc_port: int = 50051,
         heartbeat_timeout_seconds: float = 10.0,
         total_model_layers: int = 12,
+        master_secret: str = "",
+        require_auth: bool = False,
     ):
         self.host = host
         self.grpc_port = grpc_port
@@ -42,6 +45,10 @@ class MasterController:
         self.scheduler = RequestScheduler()
         self.kv_cache_mgr = KVCacheManager()
         self.metrics_collector = MetricsCollector()
+        self.auth_manager = ClusterAuthManager(
+            master_secret=master_secret,
+            require_auth=require_auth,
+        )
 
         self._running = False
         self._partition_map: Dict[str, Tuple[int, int]] = {}
@@ -53,8 +60,39 @@ class MasterController:
         device_type: str = "cpu",
         total_memory: int = 8589934592,
         available_memory: int = 6442450944,
+        auth_token: Optional[str] = None,
+        auth_signature: Optional[str] = None,
+        auth_timestamp: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Register a new worker node and assign its initial layer partition."""
+        """Register a new worker node and assign its initial layer partition.
+
+        When cluster authentication is enabled, the worker must present a valid
+        join token and HMAC signature. Without valid credentials the registration
+        is rejected.
+        """
+        # --- Secure join verification ---
+        if self.auth_manager.require_auth:
+            if not auth_token or not auth_signature or auth_timestamp is None:
+                logger.warning(f"Worker '{worker_id}' rejected: missing auth credentials.")
+                return {
+                    "success": False,
+                    "worker_id": worker_id,
+                    "reason": "missing_credentials",
+                }
+            verification = self.auth_manager.verify_worker_join(
+                worker_id=worker_id,
+                token=auth_token,
+                signature=auth_signature,
+                timestamp=auth_timestamp,
+                source_address=address,
+            )
+            if not verification["authorized"]:
+                return {
+                    "success": False,
+                    "worker_id": worker_id,
+                    "reason": verification["reason"],
+                }
+
         worker = self.registry.register(
             worker_id=worker_id,
             address=address,
